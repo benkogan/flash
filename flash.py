@@ -1,6 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+# flash.py
+# copyright (c) 2014 Ben Kogan
+
 import os
 import sys
 import time
