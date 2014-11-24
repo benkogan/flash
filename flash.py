@@ -14,6 +14,8 @@ ind = '  '
 
 class Color():
     b = '\033[96m' # blue
+    p = '\033[95m' # purple
+    n = '\033[92m' # green
     g = '\033[90m' # gray
     e = '\033[0m'  # end
 
@@ -28,6 +30,7 @@ class Card(object):
         self.right_timeout = 10
         self.wrong_timeout = 01
 
+        self.first_turn = True
         self.last_turn = False
 
         # get length of longest fact key
@@ -50,13 +53,20 @@ class Card(object):
                 separator = '·'
                 width = self.sep_width - len(fact[0]) + 3
 
+                # different color for key on first and last review
+                if self.first_turn: col = c.p
+                elif self.last_turn: col = c.n
+                else: col = c.b
+
                 print ind + str.format('{key}{sep} {fct}',
-                        key = c.b + fact[0] + c.e,
+                        key = col + fact[0] + c.e,
                         sep = c.g + separator.rjust(width) + c.e,
                         fct = fact[1].encode('utf-8'))
 
             # not last side
             if side != sides[-1]: prompt_char()
+
+        self.first_turn = False
 
         answer = prompt_char('\n' + ind + '(1: correct, 2: incorrect) ')
         try: answer = int(answer)
@@ -105,7 +115,11 @@ def clear_screen():
     print '\n'
 
 def stats(pending, waiting, done):
-    return '%d pending : %d waiting : %d done' % (len(pending), len(waiting), done)
+    c = Color()
+    return str.format('{new} new : {wait} waiting : {done} done',
+            new  = c.p + str(len(pending)) + c.e,
+            wait = c.b + str(len(waiting)) + c.e,
+            done = c.n + str(done)         + c.e)
 
 def timer_done(card):
     now = time.time()
@@ -138,15 +152,16 @@ def quiz(cards):
 
         clear_screen()
 
+        print ind + stats(pending, waiting, done)
+        print
+
+
         pending += [card for card in waiting if timer_done(card)]
 
         if not pending:
             card = min(waiting, key=lambda c: c.timer)
             waiting.remove(card)
             pending.append(card)
-
-        print ind + stats(pending, waiting, done)
-        print
 
         card = random.choice(pending)
         pending.remove(card)
