@@ -51,14 +51,14 @@ class Card(object):
 
             for fact in facts:
                 separator = '·'
-                width = self.sep_width - len(fact[0]) + 3
+                width = self.sep_width - len(fact[0]) + 2
 
                 # different color for key on first and last review
                 if self.first_turn: col = c.p
                 elif self.last_turn: col = c.n
                 else: col = c.b
 
-                print ind + str.format('{key}{sep} {fct}',
+                print ind + str.format('{key} {sep} {fct}',
                         key = col + fact[0] + c.e,
                         sep = c.g + separator.rjust(width) + c.e,
                         fct = fact[1].encode('utf-8'))
@@ -110,9 +110,7 @@ class Deck(object):
 
 def min_to_sec(m): return 60 * m
 
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
-    print '\n'
+def clear_screen(): os.system('cls' if os.name == 'nt' else 'clear')
 
 def stats(pending, waiting, done):
     c = Color()
@@ -148,15 +146,25 @@ def quiz(cards):
     waiting = []
     done = 0
 
+    prev_correct = None
+    c = Color()
+
     while pending or waiting:
 
         clear_screen()
 
+        if prev_correct is None: print
+        elif prev_correct: print c.g + '✔︎' + c.e
+        else: print c.g + '✘' + c.e
+
+        print
         print ind + stats(pending, waiting, done)
         print
 
-
-        pending += [card for card in waiting if timer_done(card)]
+        for card in waiting:
+            if timer_done(card):
+                waiting.remove(card)
+                pending.append(card)
 
         if not pending:
             card = min(waiting, key=lambda c: c.timer)
@@ -167,16 +175,24 @@ def quiz(cards):
         pending.remove(card)
 
         if card.last_turn:
-            if card.review(): done += 1
-            else: waiting.append(card.incorrect())
+            if card.review():
+                done += 1
+                prev_correct = True
+            else:
+                waiting.append(card.incorrect())
+                prev_correct = False
 
         else:
-            if card.review(): waiting.append(card.correct())
-            else: waiting.append(card.incorrect())
+            if card.review():
+                waiting.append(card.correct())
+                prev_correct = True
+            else:
+                waiting.append(card.incorrect())
+                prev_correct = False
 
     print
     print
-    print ind + 'Review over.'
+    print ind + 'Review done!'
     print
 
 if __name__ == '__main__':
