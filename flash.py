@@ -19,9 +19,10 @@ class Color():
 
 class Card(object):
 
-    def __init__(self, sides, facts):
+    def __init__(self, sides, facts, style):
         self.sides = sides
         self.facts = facts
+        self.style = style
 
         self.timer = 0
         self.right_timeout = 10
@@ -30,7 +31,8 @@ class Card(object):
         self.last_turn = False
 
         # get length of longest fact key
-        keys = [key for side in self.sides for key in side]
+        k = self.sides.keys()[0] # use an arbitrary ordering style
+        keys = [key for side in self.sides[k] for key in side]
         self.sep_width = len((max(keys, key=len)))
 
     def review(self):
@@ -38,7 +40,10 @@ class Card(object):
         INCORRECT = 2
         c = Color()
 
-        for side in self.sides:
+        # use specified ordering style
+        sides = self.sides[self.style]
+
+        for side in sides:
             facts = [(fact, self.facts[fact]) for fact in side]
 
             for fact in facts:
@@ -51,7 +56,7 @@ class Card(object):
                         fct = fact[1].encode('utf-8'))
 
             # not last side
-            if side != self.sides[-1]: prompt_char()
+            if side != sides[-1]: prompt_char()
 
         answer = prompt_char('\n' + ind + '(1: correct, 2: incorrect) ')
         try: answer = int(answer)
@@ -60,11 +65,6 @@ class Card(object):
 
     def   correct(self): return self.__update(self.right_timeout, True)
     def incorrect(self): return self.__update(self.wrong_timeout)
-
-    def __get_side(self, index):
-        side = self.sides[index]
-        facts = [(fact, self.facts[fact]) for fact in side]
-        return facts
 
     # update review status and timeout
     def __update(self, timeout, answer=False):
@@ -85,7 +85,12 @@ class Deck(object):
         self.units = {}
 
         for unit in deck:
-            self.units[unit] = [Card(self.sides, card) for card in deck[unit]]
+            self.units[unit] = []
+
+            # for each card in input file, create a card object for each of
+            # the definition's ordering styles
+            for style in self.sides:
+                self.units[unit] += [Card(self.sides, card, style) for card in deck[unit]]
 
     def get_cards(self, **kwargs):
         cards = []
