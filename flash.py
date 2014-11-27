@@ -11,6 +11,7 @@ import copy
 import yaml
 import getch
 import random
+import signal
 
 # indentation
 ind = '  '
@@ -22,68 +23,61 @@ class Color():
     g = '\033[90m' # gray
     e = '\033[0m'  # end
 
+# indicates process has been suspended (ctrl + z)
+class SuspendInterrupt(Exception): pass
+
 class Card(object):
 
-    def __init__(self, sides, facts, style):
+    def __init__(self, sides, facts):
         self.sides = sides
         self.facts = facts
-        self.style = style
 
         self.timer = 0
         self.right_timeout = 10
-        self.wrong_timeout = 01
+        self.wrong_timeout = 1
 
         self.first_turn = True
         self.last_turn = False
 
-        # get length of longest fact key
-        k = self.sides.keys()[0] # use an arbitrary ordering style
-        keys = [key for side in self.sides[k] for key in side]
-        self.sep_width = len((max(keys, key=len)))
+        fact_keys = [key for side in self.sides for key in side]
+        longest_key = max(fact_keys, key=len)
+        self.sep_width = len(longest_key)
 
     def review(self):
         CORRECT = 1
-        INCORRECT = 2
         c = Color()
 
-        # use specified ordering style
-        sides = self.sides[self.style]
-
-        for side in sides:
+        for side in self.sides:
             facts = [(fact, self.facts[fact]) for fact in side]
 
             for fact in facts:
                 separator = '·'
                 width = self.sep_width - len(fact[0]) + 2
 
-                # different color for key on first and last review
                 if self.first_turn: col = c.p
                 elif self.last_turn: col = c.n
                 else: col = c.b
 
                 print ind + str.format('{key} {sep} {fct}',
                         key = col + fact[0] + c.e,
-                        sep = c.g + separator.rjust(width) + c.e,
+                        sep = separator.rjust(width),
                         fct = fact[1].encode('utf-8'))
 
-            # not last side
-            if side != sides[-1]: prompt_char()
-
-        self.first_turn = False
+            last_side = self.sides[-1]
+            if side != last_side: prompt_char()
 
         answer = prompt_char('\n' + ind + '(1: correct, 2: incorrect) ')
+
         try: answer = int(answer)
-        except: answer = -1
+        except: answer = 0
+
         return True if answer == CORRECT else False
 
     def   correct(self): return self.__update(self.right_timeout, True)
-    def incorrect(self): return self.__update(self.wrong_timeout)
+    def incorrect(self): return self.__update(self.wrong_timeout, False)
 
     # update review status and timeout
-    def __update(self, timeout, answer=False):
-
-        # update review status
-        self.last_turn = answer
+    def __update(self, timeout, is_correct):
 
         # update timer
         deadline = time.time() + min_to_sec(timeout)
@@ -103,7 +97,7 @@ class Deck(object):
             # for each card in input file, create a card object for each of
             # the definition's ordering styles
             for style in self.sides:
-                self.units[unit] += [Card(self.sides, card, style) for card in deck[unit]]
+                self.units[unit] += [Card(self.sides[style], card) for card in deck[unit]]
 
     def get_cards(self, **kwargs):
         cards = []
@@ -117,8 +111,8 @@ def clear_screen(): os.system('cls' if os.name == 'nt' else 'clear')
 
 def stats(pending, waiting, done):
     c = Color()
-    return str.format('{new} new : {wait} waiting : {done} done',
-            new  = c.p + str(len(pending)) + c.e,
+    return str.format('{pend} pending : {wait} waiting : {done} done',
+            pend = c.p + str(len(pending)) + c.e,
             wait = c.b + str(len(waiting)) + c.e,
             done = c.n + str(done)         + c.e)
 
@@ -134,7 +128,7 @@ def prompt_char(s=''):
     # handle signal codes (ctrl + c, d, z)
     if char == '\x03': raise KeyboardInterrupt()
     if char == '\x04': raise EOFError()
-    if char == '\x1a': print '^Z handling is not implemented.'
+    if char == '\x1a': raise SuspendInterrupt()
 
     return char
 
@@ -144,25 +138,26 @@ def parse(card_file):
         deck_definition = deck_data.pop('Definition')
         return (deck_data, deck_definition)
 
+def print_status(prev_correct, pending, waiting, done):
+    c = Color()
+
+    if prev_correct is None:  symbol = ''
+    if prev_correct is True:  symbol = '✔︎'
+    if prev_correct is False: symbol = '✘'
+
+    print c.g + symbol + c.e
+    print
+    print ind + stats(pending, waiting, done)
+    print
+
 def quiz(cards):
     pending = copy.deepcopy(cards)
     waiting = []
     done = 0
 
     prev_correct = None
-    c = Color()
 
     while pending or waiting:
-
-        clear_screen()
-
-        if prev_correct is None: print
-        elif prev_correct: print c.g + '✔︎' + c.e
-        else: print c.g + '✘' + c.e
-
-        print
-        print ind + stats(pending, waiting, done)
-        print
 
         for card in waiting:
             if timer_done(card):
@@ -177,26 +172,24 @@ def quiz(cards):
         card = random.choice(pending)
         pending.remove(card)
 
-        if card.last_turn:
-            if card.review():
-                done += 1
-                prev_correct = True
-            else:
-                waiting.append(card.incorrect())
-                prev_correct = False
+        while True:
+            clear_screen()
+            print_status(prev_correct, pending, waiting, done)
 
+            try: correct = card.review()
+            except SuspendInterrupt: os.kill(os.getpid(), signal.SIGTSTP)
+            else: break
+
+        card.first_turn = False
+
+        if correct:
+            if card.last_turn: done += 1
+            else: waiting.append(card.correct())
+            card.last_turn = True
+            prev_correct = True
         else:
-            if card.review():
-                waiting.append(card.correct())
-                prev_correct = True
-            else:
-                waiting.append(card.incorrect())
-                prev_correct = False
-
-    print
-    print
-    print ind + 'Review done!'
-    print
+            waiting.append(card.incorrect())
+            prev_correct = False
 
 if __name__ == '__main__':
     deck_path = sys.argv[1]
@@ -206,5 +199,16 @@ if __name__ == '__main__':
     deck = Deck(deck_data, deck_def)
     cards = deck.get_cards(units=units)
 
-    quiz(cards)
+    try:
+        quiz(cards)
+        print
+        print
+        print ind + 'Review done!'
+        print
+
+    except (KeyboardInterrupt, EOFError):
+        print
+        print ind + 'Quit!'
+        print
+        sys.exit()
 
