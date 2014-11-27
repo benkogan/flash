@@ -36,8 +36,10 @@ class Card(object):
         self.right_timeout = 10
         self.wrong_timeout = 1
 
+        self.turn_count = 0
         self.first_turn = True
         self.last_turn = False
+        self.is_done = False
 
         fact_keys = [key for side in self.sides for key in side]
         longest_key = max(fact_keys, key=len)
@@ -45,6 +47,7 @@ class Card(object):
 
     def review(self):
         CORRECT = 1
+        UNDO = 'z'
         c = Color()
 
         for side in self.sides:
@@ -64,25 +67,50 @@ class Card(object):
                         fct = fact[1].encode('utf-8'))
 
             last_side = self.sides[-1]
-            if side != last_side: prompt_char()
+            if side != last_side:
+                r = prompt_char()
+                if r == UNDO: return (None, {'undo': True})
 
         answer = prompt_char('\n' + ind + '(1: correct, 2: incorrect) ')
 
         try: answer = int(answer)
-        except: answer = 0
+        except: pass
 
-        return True if answer == CORRECT else False
+        if answer == UNDO: return (None, {'undo': True})
+        elif answer == CORRECT: return (True, None)
+        else: return (False, None)
 
-    def   correct(self): return self.__update(self.right_timeout, True)
-    def incorrect(self): return self.__update(self.wrong_timeout, False)
+    def rewind(self):
+        self.turn_count -= 1
+        if self.turn_count == 0: self.first_turn = True
 
-    # update review status and timeout
-    def __update(self, timeout, is_correct):
+        if self.is_done: self.is_done = False
+        else: self.last_turn = False
 
-        # update timer
+        return self
+
+    def done(self):
+        self.turn_count += 1
+        self.is_done = True
+        return self
+
+    def correct(self):
+        self.turn_count += 1
+        self.first_turn = False
+        self.last_turn = True
+        self.__update(self.right_timeout)
+        return self
+
+    def incorrect(self):
+        self.turn_count += 1
+        self.first_turn = False
+        self.__update(self.wrong_timeout)
+        return self
+
+    # update review status and timer
+    def __update(self, timeout):
         deadline = time.time() + min_to_sec(timeout)
         self.timer = int(deadline)
-
         return self
 
 class Deck(object):
@@ -114,7 +142,7 @@ def stats(pending, waiting, done):
     return str.format('{pend} pending : {wait} waiting : {done} done',
             pend = c.p + str(len(pending)) + c.e,
             wait = c.b + str(len(waiting)) + c.e,
-            done = c.n + str(done)         + c.e)
+            done = c.n + str(len(done))    + c.e)
 
 def timer_done(card):
     now = time.time()
@@ -153,7 +181,10 @@ def print_status(prev_correct, pending, waiting, done):
 def quiz(cards):
     pending = copy.deepcopy(cards)
     waiting = []
-    done = 0
+    done = []
+
+    # queue of reviewed cards used for `undo`
+    reviewed_q = []
 
     prev_correct = None
 
@@ -173,23 +204,45 @@ def quiz(cards):
         pending.remove(card)
 
         while True:
+
             clear_screen()
             print_status(prev_correct, pending, waiting, done)
 
-            try: correct = card.review()
+            try: correct, option = card.review()
             except SuspendInterrupt: os.kill(os.getpid(), signal.SIGTSTP)
-            else: break
+            else:
 
-        card.first_turn = False
+                if option and option['undo'] == True:
+                    if card.first_turn: pending.append(card)
+                    else: waiting.append(card)
 
-        if correct:
-            if card.last_turn: done += 1
-            else: waiting.append(card.correct())
-            card.last_turn = True
-            prev_correct = True
-        else:
-            waiting.append(card.incorrect())
-            prev_correct = False
+                    if reviewed_q:
+                        card = reviewed_q.pop()
+                        card.rewind()
+                    else:
+                        # repeat current card
+                        pass
+
+                    if card in waiting: waiting.remove(card)
+                    if card in pending: pending.remove(card)
+                    if card in done: done.remove(card)
+
+                    prev_correct = None
+
+                elif correct:
+                    if card.last_turn: done.append(card.done())
+                    else: waiting.append(card.correct())
+
+                    reviewed_q.append(card)
+                    prev_correct = True
+
+                elif not correct:
+                    waiting.append(card.incorrect())
+
+                    reviewed_q.append(card)
+                    prev_correct = False
+
+                if option is None: break
 
 if __name__ == '__main__':
     deck_path = sys.argv[1]
