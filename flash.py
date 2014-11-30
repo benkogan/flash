@@ -48,6 +48,7 @@ class Card(object):
     def review(self):
         CORRECT = 1
         UNDO = 'z'
+        HELP = 'h'
         c = Color()
 
         for side in self.sides:
@@ -69,14 +70,16 @@ class Card(object):
             last_side = self.sides[-1]
             if side != last_side:
                 r = prompt_char()
-                if r == UNDO: return (None, {'undo': True})
+                if r == UNDO: return (None, 'undo')
+                if r == HELP: return (None, 'help')
 
         answer = prompt_char('\n' + ind + '(1: correct, 2: incorrect) ')
 
         try: answer = int(answer)
         except: pass
 
-        if answer == UNDO: return (None, {'undo': True})
+        if answer == UNDO: return (None, 'undo')
+        elif answer == HELP: return (None, 'help')
         elif answer == CORRECT: return (True, None)
         else: return (False, None)
 
@@ -178,6 +181,28 @@ def print_status(prev_correct, pending, waiting, done):
     print ind + stats(pending, waiting, done)
     print
 
+def print_help():
+    c = Color() # TODO: make global?
+
+    print
+    print
+    print ind + 'Usage:'
+    print c.g
+    print ind + ind + 'Press any key to advance a card to its'
+    print ind + ind + 'next side. Once the final side is reached,'
+    print ind + ind + 'press `1` for a correct answer, or any'
+    print ind + ind + 'other key (excluding the commands below)'
+    print ind + ind + 'for an incorrect answer. Quit at any time'
+    print ind + ind + 'with `^C` (control + c).'
+    print c.e
+    print ind + 'Commands:'
+    print c.g
+    print ind + ind + '`z`      undo and rewind one card'
+    print ind + ind + '`h`      show this help screen'
+    print c.e
+    print ind + 'Press any key to leave this help screen.'
+    print
+
 def quiz(cards):
     pending = copy.deepcopy(cards)
     waiting = []
@@ -212,7 +237,7 @@ def quiz(cards):
             except SuspendInterrupt: os.kill(os.getpid(), signal.SIGTSTP)
             else:
 
-                if option and option['undo'] == True:
+                if option == 'undo':
                     if card.first_turn: pending.append(card)
                     else: waiting.append(card)
 
@@ -228,6 +253,11 @@ def quiz(cards):
                     if card in done: done.remove(card)
 
                     prev_correct = None
+
+                elif option == 'help':
+                    clear_screen()
+                    print_help()
+                    prompt_char()
 
                 elif correct:
                     if card.last_turn: done.append(card.done())
