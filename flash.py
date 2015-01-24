@@ -12,6 +12,7 @@ import yaml
 import getch
 import random
 import signal
+import argparse
 
 # indentation
 ind = '  '
@@ -26,11 +27,19 @@ class Color():
 # indicates process has been suspended (ctrl + z)
 class SuspendInterrupt(Exception): pass
 
+# indicates invalid search query
+class QueryError(Exception):
+    def __init__(self, query):
+        self.query = query
+    def __str(self):
+        return self.query
+
 class Card(object):
 
-    def __init__(self, sides, facts):
+    def __init__(self, sides, facts, style):
         self.sides = sides
         self.facts = facts
+        self.style = style # review side order style
 
         self.timer = 0
         self.right_timeout = 10
@@ -41,6 +50,7 @@ class Card(object):
         self.last_turn = False
         self.is_done = False
 
+        # TODO: do this dynamically while printing?
         fact_keys = [key for side in self.sides for key in side]
         longest_key = max(fact_keys, key=len)
         self.sep_width = len(longest_key)
@@ -107,6 +117,7 @@ class Card(object):
     def incorrect(self):
         self.turn_count += 1
         self.first_turn = False
+        self.last_turn = False
         self.__update(self.wrong_timeout)
         return self
 
@@ -128,12 +139,16 @@ class Deck(object):
             # for each card in input file, create a card object for each of
             # the definition's ordering styles
             for style in self.sides:
-                self.units[unit] += [Card(self.sides[style], card) for card in deck[unit]]
+                self.units[unit] += [Card(self.sides[style], card, style) for card in deck[unit]]
 
     def get_cards(self, **kwargs):
         cards = []
         for unit in kwargs['units']:
             cards = cards + self.units[unit]
+
+        # apply review style filter if not None
+        if kwargs['style']:
+            cards = [card for card in cards if card.style == kwargs['style']]
         return cards
 
 def min_to_sec(m): return 60 * m
@@ -170,35 +185,33 @@ def parse(card_file):
         return (deck_data, deck_definition)
 
 def print_status(prev_correct, pending, waiting, done):
-    c = Color()
-
     if prev_correct is None:  symbol = ''
     if prev_correct is True:  symbol = '✔︎'
     if prev_correct is False: symbol = '✘'
 
+    c = Color()
     print c.g + symbol + c.e
     print
     print ind + stats(pending, waiting, done)
     print
 
 def print_help():
-    c = Color() # TODO: make global?
-
+    c = Color()
     print
     print
     print ind + 'Usage:'
     print c.g
-    print ind + ind + 'Press any key to advance a card to its'
-    print ind + ind + 'next side. Once the final side is reached,'
-    print ind + ind + 'press `1` for a correct answer, or any'
-    print ind + ind + 'other key (excluding the commands below)'
-    print ind + ind + 'for an incorrect answer. Quit at any time'
-    print ind + ind + 'with `^C` (control + c).'
+    print ind + '  Press any key to advance a card to its'
+    print ind + '  next side. Once the final side is reached,'
+    print ind + '  press `1` for a correct answer, or any'
+    print ind + '  other key (excluding the commands below)'
+    print ind + '  for an incorrect answer. Quit at any time'
+    print ind + '  with `^C` (control + c).'
     print c.e
     print ind + 'Commands:'
     print c.g
-    print ind + ind + '`z`      undo and rewind one card'
-    print ind + ind + '`h`      show this help screen'
+    print ind + '  `z`      undo and rewind one card'
+    print ind + '  `h`      show this help screen'
     print c.e
     print ind + 'Press any key to leave this help screen.'
     print
@@ -210,6 +223,8 @@ def quiz(cards):
 
     # queue of reviewed cards used for `undo`
     reviewed_q = []
+
+    suspended = None
 
     prev_correct = None
 
@@ -227,6 +242,22 @@ def quiz(cards):
 
         card = random.choice(pending)
         pending.remove(card)
+
+        # replace any suspended cards (see below)
+        if suspended:
+            waiting.append(suspended)
+            suspended = None
+
+        # problem: if all cards are green and get one wrong, that one's timer will
+        # be a lot less than the rest -> will show up again immediately
+        # => if card is within last five cards, choose another, then put it back in waiting
+
+        # if card in last five reviewed cards, try again and then replace
+        # TODO: suspend for a random number of turns > 5 instead of exactly 5
+        # TODO !!!!: this might cause issues with undo !!
+        if card in reviewed_q[-5:] and len(reviewed_q) > 5:
+            suspended = card
+            continue
 
         while True:
 
@@ -251,13 +282,18 @@ def quiz(cards):
                     if card in waiting: waiting.remove(card)
                     if card in pending: pending.remove(card)
                     if card in done: done.remove(card)
+                    if card == suspended: suspended = None
 
                     prev_correct = None
 
                 elif option == 'help':
-                    clear_screen()
-                    print_help()
-                    prompt_char()
+                    while True:
+                        try:
+                            clear_screen()
+                            print_help()
+                            prompt_char()
+                        except SuspendInterrupt: os.kill(os.getpid(), signal.SIGTSTP)
+                        else: break
 
                 elif correct:
                     if card.last_turn: done.append(card.done())
@@ -274,13 +310,57 @@ def quiz(cards):
 
                 if option is None: break
 
+def help():
+    name = sys.argv[0]
+    name = os.path.basename(name)
+
+    print
+    print ind + name, '<command> [options]'
+    print
+    print ind + 'Commands:'
+    print
+    print ind + '  review PATH           Review cards from deck file at specified path'
+    print
+    print ind + 'Options:'
+    print
+    print ind + '  -q, --query QUERY     Search for units seperated by spaces'
+    print ind + '  -s, --style SIDE      Filter cards to show only specific side-order style'
+    print ind + '  -h, --help            Output help message'
+    print ind + '  -v, --version         Output version information'
+    print
+    sys.exit()
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='A plaintext flashcard app', add_help=False)
+
+    if len(sys.argv) < 3: help()
+
+    if sys.argv.pop(1) != 'review': help()
+    deck_path = sys.argv.pop(1)
+
+    parser.add_argument('-q', '--query')
+    parser.add_argument('-s', '--style')
+    parser.add_argument('-h', '--help', action='store_true')
+    parser.add_argument('-v', '--version', action='version', version='0.0.1')
+
+    args = parser.parse_args()
+
+    if args.help: help()
+
+    deck = deck_path
+    query = args.query
+    side = args.style
+    return (deck, query, side)
+
 if __name__ == '__main__':
-    deck_path = sys.argv[1]
-    units = sys.argv[2:]
+
+    deck_path, query, style_filter = parse_args()
+    deck_search = query.split(' ')
+
     deck_data, deck_def = parse(deck_path)
 
     deck = Deck(deck_data, deck_def)
-    cards = deck.get_cards(units=units)
+    cards = deck.get_cards(units=deck_search, style=style_filter)
 
     try:
         quiz(cards)
